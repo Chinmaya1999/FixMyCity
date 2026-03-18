@@ -62,7 +62,7 @@ const Footer = () => {
         {/* Bottom Bar */}
         <div className="border-t border-gray-700 mt-8 pt-6 text-center text-gray-400 text-sm">
           <p className="flex items-center justify-center">
-            Made with <FaHeart className="text-red-500 mx-1" /> for better communities
+            Made with <FaHeart className="text-red-500 mx-1" /> chinmaya
           </p>
           <p className="mt-2">
             &copy; {new Date().getFullYear()} FixMyCity. All rights reserved.
