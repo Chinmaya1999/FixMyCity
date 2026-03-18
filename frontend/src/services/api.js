@@ -64,6 +64,8 @@ export const updateIssueStatus = (id, status, comment) =>
   API.put(`/issues/${id}/status`, { status, comment });
 export const upvoteIssue = (id) => API.post(`/issues/${id}/upvote`);
 export const addComment = (id, text) => API.post(`/issues/${id}/comments`, { text });
+export const deleteComment = (issueId, commentId) => 
+  API.delete(`/issues/${issueId}/comments/${commentId}`);
 export const getUserIssues = () => API.get('/issues/user/me');
 
 export default API;

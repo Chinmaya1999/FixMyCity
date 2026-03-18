@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
-import { getIssue, upvoteIssue, addComment, updateIssueStatus } from '../services/api';
+import { getIssue, upvoteIssue, addComment, updateIssueStatus, deleteComment } from '../services/api';
 import { format } from 'date-fns';
-import { FaMapMarkerAlt, FaUser, FaThumbsUp, FaComment, FaArrowLeft } from 'react-icons/fa';
+import { FaMapMarkerAlt, FaUser, FaThumbsUp, FaComment, FaArrowLeft, FaTrash } from 'react-icons/fa';
 import toast from 'react-hot-toast';
 
 const IssueDetailsPage = () => {
@@ -113,6 +113,19 @@ const IssueDetailsPage = () => {
       toast.success(`Issue status updated to ${status}`);
     } catch (error) {
       toast.error('Error updating status');
+    }
+  };
+
+  const handleCommentDelete = async (commentId) => {
+    try {
+      await deleteComment(id, commentId);
+      setIssue(prev => ({
+        ...prev,
+        comments: prev.comments.filter(comment => comment._id !== commentId)
+      }));
+      toast.success('Comment deleted successfully');
+    } catch (error) {
+      toast.error('Error deleting comment');
     }
   };
 
@@ -281,9 +294,20 @@ const IssueDetailsPage = () => {
                         </span>
                       )}
                     </div>
-                    <span className="text-sm text-gray-500">
-                      {format(new Date(comment.createdAt), 'PPp')}
-                    </span>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-sm text-gray-500">
+                        {format(new Date(comment.createdAt), 'PPp')}
+                      </span>
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleCommentDelete(comment._id)}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Delete comment"
+                        >
+                          <FaTrash size={12} />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <p className="text-gray-700">{comment.text}</p>
                 </div>

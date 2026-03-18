@@ -334,6 +334,52 @@ const getUserIssues = async (req, res) => {
   }
 };
 
+// @desc    Delete comment from issue
+// @route   DELETE /api/issues/:id/comments/:commentId
+// @access  Private (Admin only)
+const deleteComment = async (req, res) => {
+  try {
+    const issue = await Issue.findById(req.params.id);
+    if (!issue) {
+      return res.status(404).json({
+        success: false,
+        message: 'Issue not found'
+      });
+    }
+
+    const commentIndex = issue.comments.findIndex(
+      comment => comment._id.toString() === req.params.commentId
+    );
+
+    if (commentIndex === -1) {
+      return res.status(404).json({
+        success: false,
+        message: 'Comment not found'
+      });
+    }
+
+    issue.comments.splice(commentIndex, 1);
+    await issue.save();
+
+    // Emit socket event
+    const io = req.app.get('io');
+    io.emit('comment-deleted', {
+      issueId: issue._id,
+      commentId: req.params.commentId
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Comment deleted successfully'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
 module.exports = {
   createIssue,
   getIssues,
@@ -341,5 +387,6 @@ module.exports = {
   updateStatus,
   upvoteIssue,
   addComment,
+  deleteComment,
   getUserIssues
 };

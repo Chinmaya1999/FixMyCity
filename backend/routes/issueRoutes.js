@@ -7,6 +7,7 @@ const {
   updateStatus,
   upvoteIssue,
   addComment,
+  deleteComment,
   getUserIssues
 } = require('../controllers/issueController');
 const { protect, authorize } = require('../middleware/auth');
@@ -24,5 +25,6 @@ router.route('/:id')
 router.put('/:id/status', protect, authorize('official', 'admin'), updateStatus);
 router.post('/:id/upvote', protect, upvoteIssue);
 router.post('/:id/comments', protect, addComment);
+router.delete('/:id/comments/:commentId', protect, authorize('admin'), deleteComment);
 
 module.exports = router;
