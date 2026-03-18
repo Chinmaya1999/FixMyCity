@@ -51,124 +51,27 @@ jobs:
           fi
 
           echo "🔧 Create environment files"
-          # Create .env.production for frontend with the correct API URL
+          # Create .env.production for frontend
           cat > frontend/.env.production << EOL
           REACT_APP_API_URL=http://${{ secrets.EC2_HOST }}:5001/api
           EOL
 
           echo "📦 Backend setup"
           cd backend
+
+          # Create .env file for backend with proper CORS origin
+          cat > .env << EOL
+          PORT=5001
+          FRONTEND_URL=http://${{ secrets.EC2_HOST }}
+          MONGODB_URI=${{ secrets.MONGODB_URI }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          EOL
+
           npm install
 
-          # Install CORS if not present
-          if ! grep -q "cors" package.json; then
-            npm install cors
-          fi
-
-          # Completely replace or create server.js with proper CORS configuration
-          # Find the main server file
-          if [ -f server.js ]; then
-            SERVER_FILE=server.js
-          elif [ -f app.js ]; then
-            SERVER_FILE=app.js
-          elif [ -f index.js ]; then
-            SERVER_FILE=index.js
-          else
-            echo "❌ No backend entry file found"
-            exit 1
-          fi
-
-          echo "🔧 Configuring CORS in $SERVER_FILE"
-          
-          # Create a backup
-          cp $SERVER_FILE $SERVER_FILE.backup
-
-          # Check if CORS is already imported and configured
-          if ! grep -q "cors" $SERVER_FILE; then
-            # Add CORS import at the top after other requires
-            sed -i '1i const cors = require("cors");' $SERVER_FILE
-          fi
-
-          # Remove any existing CORS middleware and add proper configuration
-          # This is a safer approach - we'll create a new file with proper CORS
-          cat > temp_server.js << 'SERVER'
-          const express = require('express');
-          const cors = require('cors');
-          const app = express();
-
-          // CORS configuration - Allow all origins for now (you can restrict later)
-          const corsOptions = {
-            origin: function (origin, callback) {
-              // Allow requests with no origin (like mobile apps, curl, postman)
-              if (!origin) return callback(null, true);
-              
-              // Allow specific origins
-              const allowedOrigins = [
-                'http://${{ secrets.EC2_HOST }}',
-                'http://${{ secrets.EC2_HOST }}:80',
-                'http://localhost',
-                'http://localhost:3000',
-                'http://localhost:5000'
-              ];
-              
-              if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
-                callback(null, true);
-              } else {
-                callback(new Error('Not allowed by CORS'));
-              }
-            },
-            credentials: true,
-            optionsSuccessStatus: 200
-          };
-
-          // Use CORS middleware
-          app.use(cors(corsOptions));
-
-          // Handle preflight requests for all routes
-          app.options('*', cors(corsOptions));
-
-          // Add headers middleware as backup
-          app.use((req, res, next) => {
-            res.header('Access-Control-Allow-Origin', 'http://${{ secrets.EC2_HOST }}');
-            res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-            res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
-            res.header('Access-Control-Allow-Credentials', 'true');
-            
-            // Handle preflight
-            if (req.method === 'OPTIONS') {
-              return res.status(200).end();
-            }
-            next();
-          });
-
-          // Body parser middleware
-          app.use(express.json());
-          app.use(express.urlencoded({ extended: true }));
-
-          // Import your routes here
-          // const issueRoutes = require('./routes/issues');
-          // app.use('/api/issues', issueRoutes);
-
-          // For testing - add a simple route
-          app.get('/api/test', (req, res) => {
-            res.json({ message: 'CORS is working!' });
-          });
-
-          // Your existing routes will be here
-          // Make sure to keep your original routes
-
-          SERVER
-
-          # Append the original server content (excluding the first few lines that might conflict)
-          tail -n +20 $SERVER_FILE >> temp_server.js 2>/dev/null || cat $SERVER_FILE >> temp_server.js
-
-          # Replace the original file
-          mv temp_server.js $SERVER_FILE
-
           echo "🚀 Start backend on port 5001"
-          export PORT=5001
           pm2 delete backend || true
-          pm2 start $SERVER_FILE --name backend -- --port 5001
+          pm2 start server.js --name backend --watch
 
           echo "📦 Frontend setup"
           cd ../frontend
@@ -200,19 +103,7 @@ jobs:
               # Handle frontend routes
               location / {
                   try_files $uri $uri/ /index.html;
-                  
-                  # Add CORS headers for frontend
-                  add_header 'Access-Control-Allow-Origin' '*' always;
-                  add_header 'Access-Control-Allow-Methods' 'GET, POST, OPTIONS' always;
-                  add_header 'Access-Control-Allow-Headers' 'Origin, X-Requested-With, Content-Type, Accept' always;
               }
-
-              # Optional: Add a proxy for API if you want to avoid CORS
-              # location /api/ {
-              #     proxy_pass http://localhost:5001/;
-              #     proxy_set_header Host $host;
-              #     proxy_set_header X-Real-IP $remote_addr;
-              # }
           }
           NGINX
 
@@ -220,13 +111,9 @@ jobs:
           sudo rm -rf /usr/share/nginx/html/*
           sudo cp -r build/* /usr/share/nginx/html/
 
-          echo "🔓 Configure firewall to allow port 5001"
-          # For Amazon Linux 2023
-          sudo firewall-cmd --add-port=5001/tcp --permanent 2>/dev/null || echo "firewall-cmd not available"
-          sudo firewall-cmd --reload 2>/dev/null || echo "firewall-cmd not available"
-          
-          # For Amazon Linux 2 with iptables
-          sudo iptables -I INPUT -p tcp --dport 5001 -j ACCEPT 2>/dev/null || echo "iptables not available"
+          echo "🔓 Configure security group for port 5001"
+          # Check if port 5001 is open
+          sudo netstat -tlnp | grep 5001 || echo "Port 5001 is not listening yet"
 
           echo "🔄 Restart services"
           sudo systemctl restart nginx
@@ -236,6 +123,5 @@ jobs:
           echo "✅ Deployment successful"
           echo "🌎 Frontend is available at: http://${{ secrets.EC2_HOST }}"
           echo "🌎 Backend API is available at: http://${{ secrets.EC2_HOST }}:5001/api"
-          echo "🔧 Test CORS with: curl -H 'Origin: http://${{ secrets.EC2_HOST }}' -I http://${{ secrets.EC2_HOST }}:5001/api/issues?limit=6"
 
           EOF
