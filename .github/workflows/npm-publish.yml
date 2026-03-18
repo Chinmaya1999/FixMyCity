@@ -50,21 +50,51 @@ jobs:
             git pull origin master
           fi
 
+          echo "🔧 Create environment files"
+          # Create .env.production for frontend
+          cat > frontend/.env.production << EOL
+          REACT_APP_API_URL=/api
+          EOL
+
           echo "📦 Backend setup"
           cd backend
           npm install
 
-          echo "🚀 Start backend"
+          # Add CORS to backend if not present
+          if ! grep -q "cors" package.json; then
+            npm install cors
+          fi
 
+          # Update backend to handle CORS properly
+          if [ -f server.js ]; then
+            # Check if CORS is already configured
+            if ! grep -q "cors" server.js; then
+              # Add CORS configuration to the top of server.js after other requires
+              sed -i '/require/ a const cors = require("cors");' server.js
+              sed -i '/app.use(express.json/ a app.use(cors({ origin: ["http://'"${{ secrets.EC2_HOST }}"'", "http://localhost:3000"] }));' server.js
+            fi
+          elif [ -f app.js ]; then
+            if ! grep -q "cors" app.js; then
+              sed -i '/require/ a const cors = require("cors");' app.js
+              sed -i '/app.use(express.json/ a app.use(cors({ origin: ["http://'"${{ secrets.EC2_HOST }}"'", "http://localhost:3000"] }));' app.js
+            fi
+          elif [ -f index.js ]; then
+            if ! grep -q "cors" index.js; then
+              sed -i '/require/ a const cors = require("cors");' index.js
+              sed -i '/app.use(express.json/ a app.use(cors({ origin: ["http://'"${{ secrets.EC2_HOST }}"'", "http://localhost:3000"] }));' index.js
+            fi
+          else
+            echo "❌ No backend entry file found"
+            exit 1
+          fi
+
+          echo "🚀 Start backend"
           if [ -f server.js ]; then
             FILE=server.js
           elif [ -f app.js ]; then
             FILE=app.js
           elif [ -f index.js ]; then
             FILE=index.js
-          else
-            echo "❌ No backend entry file found"
-            exit 1
           fi
 
           pm2 delete backend || true
@@ -72,31 +102,67 @@ jobs:
 
           echo "📦 Frontend setup"
           cd ../frontend
+
+          # Replace any hardcoded localhost URLs in the source code
+          echo "🔧 Fixing hardcoded API URLs in frontend..."
+          find ./src -type f -name "*.js" -exec sed -i 's|http://localhost:5001||g' {} \;
+          find ./src -type f -name "*.jsx" -exec sed -i 's|http://localhost:5001||g' {} \;
+          find ./src -type f -name "*.ts" -exec sed -i 's|http://localhost:5001||g' {} \;
+          find ./src -type f -name "*.tsx" -exec sed -i 's|http://localhost:5001||g' {} \;
+
+          # Install dependencies and build
           npm install
           npm run build
 
           echo "🌐 Configure Nginx"
-
           sudo rm -f /etc/nginx/conf.d/app.conf
 
-          echo 'server {' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    listen 80;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    server_name _;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    location / {' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        root /usr/share/nginx/html;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        index index.html;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        try_files $uri /index.html;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    }' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    location /api/ {' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_pass http://localhost:5001/;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_http_version 1.1;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_set_header Upgrade $http_upgrade;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_set_header Connection "upgrade";' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_set_header Host $host;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    }' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '}' | sudo tee -a /etc/nginx/conf.d/app.conf
+          # Create Nginx configuration
+          sudo tee /etc/nginx/conf.d/app.conf > /dev/null << 'NGINX'
+          server {
+              listen 80;
+              server_name _;
+              
+              # Root for static files
+              root /usr/share/nginx/html;
+              index index.html;
+
+              # Handle frontend routes
+              location / {
+                  try_files $uri $uri/ /index.html;
+                  add_header Access-Control-Allow-Origin *;
+              }
+
+              # Proxy API requests to backend
+              location /api/ {
+                  proxy_pass http://localhost:5001/;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade $http_upgrade;
+                  proxy_set_header Connection 'upgrade';
+                  proxy_set_header Host $host;
+                  proxy_set_header X-Real-IP $remote_addr;
+                  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_cache_bypass $http_upgrade;
+                  
+                  # Add CORS headers
+                  add_header Access-Control-Allow-Origin *;
+                  add_header Access-Control-Allow-Methods 'GET, POST, PUT, DELETE, OPTIONS';
+                  add_header Access-Control-Allow-Headers 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization';
+                  
+                  # Handle preflight requests
+                  if ($request_method = 'OPTIONS') {
+                      add_header Access-Control-Allow-Origin *;
+                      add_header Access-Control-Allow-Methods 'GET, POST, PUT, DELETE, OPTIONS';
+                      add_header Access-Control-Allow-Headers 'DNT,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Range,Authorization';
+                      add_header Access-Control-Max-Age 1728000;
+                      add_header Content-Type 'text/plain; charset=utf-8';
+                      add_header Content-Length 0;
+                      return 204;
+                  }
+              }
+          }
+          NGINX
 
           echo "🌐 Deploy frontend"
           sudo rm -rf /usr/share/nginx/html/*
@@ -105,7 +171,9 @@ jobs:
           echo "🔄 Restart services"
           sudo systemctl restart nginx
           pm2 save
+          pm2 startup
 
           echo "✅ Deployment successful"
+          echo "🌎 Your app is available at: http://${{ secrets.EC2_HOST }}"
 
           EOF
