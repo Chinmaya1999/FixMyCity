@@ -51,27 +51,57 @@ jobs:
           fi
 
           echo "🔧 Create environment files"
-          # Create .env.production for frontend
+          # Create .env.production for frontend with the correct API URL
           cat > frontend/.env.production << EOL
           REACT_APP_API_URL=http://${{ secrets.EC2_HOST }}:5001/api
           EOL
 
           echo "📦 Backend setup"
           cd backend
-
-          # Create .env file for backend with proper CORS origin
-          cat > .env << EOL
-          PORT=5001
-          FRONTEND_URL=http://${{ secrets.EC2_HOST }}
-          MONGODB_URI=${{ secrets.MONGODB_URI }}
-          JWT_SECRET=${{ secrets.JWT_SECRET }}
-          EOL
-
           npm install
 
-          echo "🚀 Start backend on port 5001"
+          # Add CORS to backend if not present
+          if ! grep -q "cors" package.json; then
+            npm install cors
+          fi
+
+          # Update backend to handle CORS properly
+          if [ -f server.js ]; then
+            # Check if CORS is already configured
+            if ! grep -q "cors" server.js; then
+              # Add CORS configuration to the top of server.js after other requires
+              sed -i '/require/ a const cors = require("cors");' server.js
+              sed -i '/app.use(express.json/ a app.use(cors({ origin: ["http://'"${{ secrets.EC2_HOST }}"':5001", "http://'"${{ secrets.EC2_HOST }}"'", "http://localhost:3000"] }));' server.js
+            fi
+          elif [ -f app.js ]; then
+            if ! grep -q "cors" app.js; then
+              sed -i '/require/ a const cors = require("cors");' app.js
+              sed -i '/app.use(express.json/ a app.use(cors({ origin: ["http://'"${{ secrets.EC2_HOST }}"':5001", "http://'"${{ secrets.EC2_HOST }}"'", "http://localhost:3000"] }));' app.js
+            fi
+          elif [ -f index.js ]; then
+            if ! grep -q "cors" index.js; then
+              sed -i '/require/ a const cors = require("cors");' index.js
+              sed -i '/app.use(express.json/ a app.use(cors({ origin: ["http://'"${{ secrets.EC2_HOST }}"':5001", "http://'"${{ secrets.EC2_HOST }}"'", "http://localhost:3000"] }));' index.js
+            fi
+          else
+            echo "❌ No backend entry file found"
+            exit 1
+          fi
+
+          echo "🚀 Start backend"
+          if [ -f server.js ]; then
+            FILE=server.js
+          elif [ -f app.js ]; then
+            FILE=app.js
+          elif [ -f index.js ]; then
+            FILE=index.js
+          fi
+
+          # Make sure backend runs on port 5001
+          # You might need to modify your backend to use process.env.PORT or default to 5001
+          export PORT=5001
           pm2 delete backend || true
-          pm2 start server.js --name backend --watch
+          pm2 start $FILE --name backend -- --port 5001
 
           echo "📦 Frontend setup"
           cd ../frontend
@@ -87,10 +117,10 @@ jobs:
           npm install
           npm run build
 
-          echo "🌐 Configure Nginx for frontend only"
+          echo "🌐 Configure Nginx"
           sudo rm -f /etc/nginx/conf.d/app.conf
 
-          # Create Nginx configuration for frontend only
+          # Create Nginx configuration
           sudo tee /etc/nginx/conf.d/app.conf > /dev/null << 'NGINX'
           server {
               listen 80;
@@ -111,9 +141,13 @@ jobs:
           sudo rm -rf /usr/share/nginx/html/*
           sudo cp -r build/* /usr/share/nginx/html/
 
-          echo "🔓 Configure security group for port 5001"
-          # Check if port 5001 is open
-          sudo netstat -tlnp | grep 5001 || echo "Port 5001 is not listening yet"
+          echo "🔓 Configure firewall to allow port 5001"
+          # For Amazon Linux 2023
+          sudo firewall-cmd --add-port=5001/tcp --permanent 2>/dev/null || echo "firewall-cmd not available"
+          sudo firewall-cmd --reload 2>/dev/null || echo "firewall-cmd not available"
+          
+          # For Amazon Linux 2 with iptables
+          sudo iptables -I INPUT -p tcp --dport 5001 -j ACCEPT 2>/dev/null || echo "iptables not available"
 
           echo "🔄 Restart services"
           sudo systemctl restart nginx
