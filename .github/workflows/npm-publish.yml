@@ -59,7 +59,7 @@ jobs:
           echo "📦 Backend setup"
           cd backend
 
-          # 🟢 CRITICAL FIX: Create .env file for backend with proper FRONTEND_URL
+          # Create .env file for backend with proper CORS origin
           cat > .env << EOL
           PORT=5001
           FRONTEND_URL=http://${{ secrets.EC2_HOST }}
@@ -67,24 +67,11 @@ jobs:
           JWT_SECRET=${{ secrets.JWT_SECRET }}
           EOL
 
-          # Verify the .env file was created
-          echo "✅ Backend .env file created:"
-          cat .env
-
           npm install
 
           echo "🚀 Start backend on port 5001"
           pm2 delete backend || true
-          
-          # 🟢 IMPORTANT: Pass the environment variables to PM2
-          pm2 start server.js --name backend -- --port 5001
-          
-          # Wait for backend to start
-          sleep 5
-          
-          # Test if backend is running
-          echo "🔍 Testing backend connection..."
-          curl http://localhost:5001/api/issues?limit=6 || echo "⚠️ Backend not responding yet, but continuing..."
+          pm2 start server.js --name backend --watch
 
           echo "📦 Frontend setup"
           cd ../frontend
@@ -93,6 +80,8 @@ jobs:
           echo "🔧 Fixing hardcoded API URLs in frontend..."
           find ./src -type f -name "*.js" -exec sed -i 's|http://localhost:5001|http://'"${{ secrets.EC2_HOST }}"':5001|g' {} \;
           find ./src -type f -name "*.jsx" -exec sed -i 's|http://localhost:5001|http://'"${{ secrets.EC2_HOST }}"':5001|g' {} \;
+          find ./src -type f -name "*.ts" -exec sed -i 's|http://localhost:5001|http://'"${{ secrets.EC2_HOST }}"':5001|g' {} \;
+          find ./src -type f -name "*.tsx" -exec sed -i 's|http://localhost:5001|http://'"${{ secrets.EC2_HOST }}"':5001|g' {} \;
 
           # Install dependencies and build
           npm install
@@ -123,23 +112,16 @@ jobs:
           sudo cp -r build/* /usr/share/nginx/html/
 
           echo "🔓 Configure security group for port 5001"
-          # Check if port 5001 is listening
-          echo "🔍 Checking if port 5001 is listening..."
-          sudo netstat -tlnp | grep 5001 || echo "⚠️ Port 5001 is not listening yet"
+          # Check if port 5001 is open
+          sudo netstat -tlnp | grep 5001 || echo "Port 5001 is not listening yet"
 
           echo "🔄 Restart services"
           sudo systemctl restart nginx
-          
-          # Save PM2 configuration
           pm2 save
           pm2 startup
 
           echo "✅ Deployment successful"
           echo "🌎 Frontend is available at: http://${{ secrets.EC2_HOST }}"
           echo "🌎 Backend API is available at: http://${{ secrets.EC2_HOST }}:5001/api"
-          
-          # Final verification
-          echo "🔍 Final verification - testing API..."
-          curl -I http://${{ secrets.EC2_HOST }}:5001/api/issues?limit=6
 
           EOF
