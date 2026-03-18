@@ -20,19 +20,18 @@ jobs:
 
       - name: 🚀 Deploy to EC2
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+          EC2_HOST="${{ secrets.EC2_HOST }}"
+          EC2_USER="${{ secrets.EC2_USER }}"
+
+          ssh -o StrictHostKeyChecking=no $EC2_USER@$EC2_HOST << EOF
 
           echo "🔧 Updating system"
           sudo yum update -y
 
-          echo "📦 Installing Git"
+          echo "📦 Installing dependencies"
           sudo yum install git -y
-
-          echo "📦 Installing Node.js"
           curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
           sudo yum install -y nodejs
-
-          echo "📦 Installing PM2"
           sudo npm install -g pm2
 
           echo "📦 Installing Nginx"
@@ -54,49 +53,63 @@ jobs:
           cd backend
           npm install
 
-          echo "🚀 Start backend"
+          echo "🛠 Creating backend .env"
+          cat > .env <<EOL
+PORT=5001
+MONGODB_URI=mongodb+srv://chinmayakumarmallick25_db_user:vphFFVCHD1mdX5z5@cluster0.pjtae8z.mongodb.net/issue-tracker?retryWrites=true&w=majority
+JWT_SECRET=your_super_secret_jwt_key_here_change_this_in_production
+JWT_EXPIRE=30d
+CLOUDINARY_CLOUD_NAME=drxacauzp
+CLOUDINARY_API_KEY=123763477494389
+CLOUDINARY_API_SECRET=j6dHZ5F-tTz41sjbl4Dt_KkxONo
+FRONTEND_URL=http://$EC2_HOST
+EOL
 
-          if [ -f server.js ]; then
-            FILE=server.js
-          elif [ -f app.js ]; then
-            FILE=app.js
-          elif [ -f index.js ]; then
-            FILE=index.js
-          else
-            echo "❌ No backend entry file found"
-            exit 1
-          fi
+          echo "🚀 Starting backend"
+          if [ -f server.js ]; then FILE=server.js;
+          elif [ -f app.js ]; then FILE=app.js;
+          elif [ -f index.js ]; then FILE=index.js;
+          else echo "❌ No backend entry file found"; exit 1; fi
 
           pm2 delete backend || true
           pm2 start $FILE --name backend
 
           echo "📦 Frontend setup"
           cd ../frontend
+
+          echo "🛠 Creating frontend .env"
+          cat > .env <<EOL
+REACT_APP_API_URL=/api
+REACT_APP_SOCKET_URL=http://$EC2_HOST
+REACT_APP_MAP_TILE_URL=https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png
+REACT_APP_MAP_ATTRIBUTION=&copy; OpenStreetMap contributors
+EOL
+
           npm install
           npm run build
 
           echo "🌐 Configure Nginx"
-
           sudo rm -f /etc/nginx/conf.d/app.conf
 
-          echo 'server {' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    listen 80;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    server_name _;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    location / {' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        root /usr/share/nginx/html;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        index index.html;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        try_files $uri /index.html;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    }' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    location /api/ {' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_pass http://localhost:5001/;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_http_version 1.1;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_set_header Upgrade $http_upgrade;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_set_header Connection "upgrade";' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '        proxy_set_header Host $host;' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '    }' | sudo tee -a /etc/nginx/conf.d/app.conf
-          echo '}' | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "server {" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "    listen 80;" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "    server_name _;" | sudo tee -a /etc/nginx/conf.d/app.conf
+
+          echo "    location / {" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "        root /usr/share/nginx/html;" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "        index index.html;" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "        try_files \$uri /index.html;" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "    }" | sudo tee -a /etc/nginx/conf.d/app.conf
+
+          echo "    location /api/ {" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "        proxy_pass http://localhost:5001/;" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "        proxy_http_version 1.1;" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "        proxy_set_header Upgrade \$http_upgrade;" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "        proxy_set_header Connection \"upgrade\";" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "        proxy_set_header Host \$host;" | sudo tee -a /etc/nginx/conf.d/app.conf
+          echo "    }" | sudo tee -a /etc/nginx/conf.d/app.conf
+
+          echo "}" | sudo tee -a /etc/nginx/conf.d/app.conf
 
           echo "🌐 Deploy frontend"
           sudo rm -rf /usr/share/nginx/html/*
