@@ -29,7 +29,7 @@ jobs:
           sudo yum install git -y
 
           echo "📦 Installing Node.js"
-          curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+          curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
           sudo yum install -y nodejs
 
           echo "📦 Installing PM2"
@@ -49,7 +49,7 @@ jobs:
             git clone https://github.com/${{ github.repository }} .
           else
             echo "🔄 Pull latest code"
-            git pull origin main
+            git pull origin master
           fi
 
           echo "📦 Backend setup"
@@ -57,15 +57,50 @@ jobs:
           npm install
 
           echo "🚀 Start backend"
+
+          # Auto detect backend entry file
+          if [ -f server.js ]; then
+            FILE=server.js
+          elif [ -f app.js ]; then
+            FILE=app.js
+          elif [ -f index.js ]; then
+            FILE=index.js
+          else
+            echo "❌ No backend entry file found"
+            exit 1
+          fi
+
           pm2 delete backend || true
-          pm2 start index.js --name backend
+          pm2 start $FILE --name backend
 
           echo "📦 Frontend setup"
           cd ../frontend
           npm install
           npm run build
 
-          echo "🌐 Deploy to Nginx"
+          echo "🌐 Configure Nginx"
+          sudo bash -c 'cat > /etc/nginx/conf.d/app.conf <<EOL
+          server {
+              listen 80;
+              server_name _;
+
+              location / {
+                  root /usr/share/nginx/html;
+                  index index.html;
+                  try_files \$uri /index.html;
+              }
+
+              location /api/ {
+                  proxy_pass http://localhost:5001/;
+                  proxy_http_version 1.1;
+                  proxy_set_header Upgrade \$http_upgrade;
+                  proxy_set_header Connection "upgrade";
+                  proxy_set_header Host \$host;
+              }
+          }
+EOL'
+
+          echo "🌐 Deploy frontend"
           sudo rm -rf /usr/share/nginx/html/*
           sudo cp -r build/* /usr/share/nginx/html/
 
