@@ -290,8 +290,8 @@ const addComment = async (req, res) => {
     issue.comments.push(comment);
     await issue.save();
 
+    await issue.populate('comments.user', 'name email role avatar');
     const newComment = issue.comments[issue.comments.length - 1];
-    await newComment.populate('user', 'name email role avatar');
 
     // Emit socket event
     const io = req.app.get('io');

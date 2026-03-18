@@ -204,7 +204,7 @@ const IssueDetailsPage = () => {
             <button
               onClick={handleUpvote}
               className={`flex items-center space-x-2 px-4 py-2 rounded-lg ${
-                issue.upvotes?.includes(user?.id)
+                Array.isArray(issue.upvotes) && issue.upvotes.includes(user?.id)
                   ? 'bg-blue-600 text-white'
                   : 'bg-gray-100 hover:bg-gray-200'
               }`}
