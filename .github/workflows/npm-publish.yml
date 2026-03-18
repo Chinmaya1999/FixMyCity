@@ -1,0 +1,56 @@
+name: MERN Deploy to Amazon Linux
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v3
+
+      - name: 🔐 Setup SSH
+        uses: webfactory/ssh-agent@v0.7.0
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+
+      - name: 🚀 Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} << 'EOF'
+
+          echo "📂 Navigate to app directory"
+          cd ${{ secrets.APP_DIR }} || git clone https://github.com/${{ github.repository }} . && cd ${{ secrets.APP_DIR }}
+
+          echo "🔄 Pull latest code"
+          git pull origin main
+
+          echo "📦 Install backend dependencies"
+          cd backend
+          npm install
+
+          echo "🔧 Restart backend with PM2"
+          pm2 delete backend || true
+          pm2 start index.js --name backend
+
+          echo "📦 Install frontend dependencies"
+          cd ../frontend
+          npm install
+
+          echo "🏗 Build frontend"
+          npm run build
+
+          echo "📁 Move build to Nginx directory"
+          sudo rm -rf /usr/share/nginx/html/*
+          sudo cp -r build/* /usr/share/nginx/html/
+
+          echo "🔄 Restart services"
+          sudo systemctl restart nginx
+          pm2 save
+
+          echo "✅ Deployment complete"
+
+          EOF
